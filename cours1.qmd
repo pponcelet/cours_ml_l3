@@ -1,0 +1,22 @@
+---
+title: "Introduction au Machine Learning"
+format:
+  revealjs:
+    theme: simple
+    transition: slide
+---
+
+## Plan du cours
+
+1. Qu'est-ce que le ML ?
+2. Types d'apprentissage
+3. Premier exemple
+
+## Qu'est-ce que le ML ?
+
+- Définition...
+- Exemples...
+
+## À compléter
+
+Votre contenu ici.
