@@ -1,0 +1,245 @@
+---
+title: "L'algorithme K-Means"
+date: today
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+---
+
+## Le clustering
+
+- Regrouper des données **similaires** sans étiquettes (non supervisé)
+- Similarité définie par une **distance** (euclidienne ici)
+- Objectif : homogénéité **dans** les clusters, séparation **entre** les clusters
+
+## K-Means : l'idée
+
+Partitionner en $K$ groupes en minimisant l'**inertie intra-classe** :
+
+$$J = \sum_{k=1}^{K} \sum_{x_i \in C_k} \|x_i - \mu_k\|^2$$
+
+- $C_k$ : cluster $k$, $\mu_k$ : son centroïde (barycentre)
+- $K$ est choisi **à l'avance**
+
+## Algorithme de Lloyd (1957)
+
+1. **Initialisation** : choisir $K$ centroïdes (aléatoire ou K-Means++)
+2. **Assignation** : chaque point rejoint le centroïde le plus proche
+3. **Mise à jour** : chaque centroïde = barycentre de ses points
+4. **Itérer** jusqu'à convergence
+
+::: {.callout-note}
+$J$ diminue à chaque étape → convergence garantie, mais vers un **minimum local** !
+:::
+
+## Simulation interactive
+
+<div>
+<label>Données : <select id="dataset">
+<option value="blobs">Blobs gaussiens</option>
+<option value="moons">Lunes</option>
+<option value="circles">Cercles</option>
+<option value="uniform">Uniforme</option>
+</select></label>
+&nbsp;
+<label>Points : <input type="range" id="nPts" min="50" max="400" value="200"> <span id="nVal">200</span></label>
+&nbsp;
+<label>K : <input type="range" id="kSl" min="2" max="8" value="3"> <span id="kVal">3</span></label>
+&nbsp;
+<label>Init : <select id="initMode">
+<option value="random">Aléatoire</option>
+<option value="kpp">K-Means++</option>
+</select></label>
+</div>
+
+<div style="margin:8px 0;">
+<button onclick="initAll()">🔄 Réinitialiser</button>
+<button onclick="oneStep()">➡️ Étape</button>
+<button onclick="toggleRun()" id="btnRun">▶️ Animer</button>
+&nbsp; <b>Itération :</b> <span id="iter">0</span> &nbsp; <b>Inertie J :</b> <span id="inertie">—</span>
+</div>
+
+<canvas id="cv" width="900" height="450" style="background:white; border:1px solid #999; display:block;"></canvas>
+
+<script>
+var cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+var W = cv.width, H = cv.height, PAD = 30;
+var pts = [], cents = [], labs = [], anim = null, iter = 0;
+var COLS = ["#e74c3c","#3498db","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22","#34495e"];
+var xmin=-5, xmax=5, ymin=-5, ymax=5;
+
+function randn(){ var u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function toX(x){ return PAD + (x-xmin)/(xmax-xmin)*(W-2*PAD); }
+function toY(y){ return H - PAD - (y-ymin)/(ymax-ymin)*(H-2*PAD); }
+
+function genData(){
+  var type = document.getElementById("dataset").value;
+  var n = parseInt(document.getElementById("nPts").value);
+  pts = [];
+  var i, t, r;
+  if(type==="blobs"){
+    var nc = [[2,2],[-2,-2],[2,-3]];
+    for(i=0;i<n;i++){ var c = nc[i%3]; pts.push({x:c[0]+randn(), y:c[1]+randn()}); }
+  } else if(type==="moons"){
+    for(i=0;i<n;i++){
+      t = Math.random()*Math.PI; var m = i%2;
+      if(m===0) pts.push({x:3*Math.cos(t)-1.5+randn()*0.25, y:2*Math.sin(t)+0.5+randn()*0.25});
+      else pts.push({x:3-3*Math.cos(t)-1.5+randn()*0.25, y:-2*Math.sin(t)-0.5+randn()*0.25});
+    }
+  } else if(type==="circles"){
+    for(i=0;i<n;i++){
+      t = Math.random()*2*Math.PI; r = (i%2===0) ? 1.2 : 3.5;
+      pts.push({x:r*Math.cos(t)+randn()*0.25, y:r*Math.sin(t)+randn()*0.25});
+    }
+  } else {
+    for(i=0;i<n;i++) pts.push({x:(Math.random()*2-1)*4, y:(Math.random()*2-1)*4});
+  }
+  labs = new Array(pts.length).fill(-1);
+}
+
+function initCents(){
+  var K = parseInt(document.getElementById("kSl").value);
+  var mode = document.getElementById("initMode").value;
+  cents = [];
+  cents.push(Object.assign({}, pts[Math.floor(Math.random()*pts.length)]));
+  if(mode==="kpp"){
+    while(cents.length<K){
+      var d2 = pts.map(function(p){
+        var m = Infinity;
+        cents.forEach(function(c){ m = Math.min(m, (p.x-c.x)*(p.x-c.x)+(p.y-c.y)*(p.y-c.y)); });
+        return m;
+      });
+      var s = d2.reduce(function(a,b){return a+b;},0), r = Math.random()*s, acc = 0, idx = 0;
+      for(var i=0;i<d2.length;i++){ acc+=d2[i]; if(acc>=r){ idx=i; break; } }
+      cents.push(Object.assign({}, pts[idx]));
+    }
+  } else {
+    while(cents.length<K) cents.push(Object.assign({}, pts[Math.floor(Math.random()*pts.length)]));
+  }
+}
+
+function assignStep(){
+  var changed = false;
+  for(var i=0;i<pts.length;i++){
+    var best = 0, bd = Infinity;
+    for(var k=0;k<cents.length;k++){
+      var d = (pts[i].x-cents[k].x)*(pts[i].x-cents[k].x)+(pts[i].y-cents[k].y)*(pts[i].y-cents[k].y);
+      if(d<bd){ bd=d; best=k; }
+    }
+    if(labs[i]!==best){ labs[i]=best; changed=true; }
+  }
+  return changed;
+}
+
+function updateStep(){
+  for(var k=0;k<cents.length;k++){
+    var sx=0, sy=0, cnt=0;
+    for(var i=0;i<pts.length;i++) if(labs[i]===k){ sx+=pts[i].x; sy+=pts[i].y; cnt++; }
+    if(cnt>0){ cents[k].x=sx/cnt; cents[k].y=sy/cnt; }
+  }
+}
+
+function inertia(){
+  var J=0;
+  for(var i=0;i<pts.length;i++){
+    var c = cents[labs[i]];
+    if(c) J += (pts[i].x-c.x)*(pts[i].x-c.x)+(pts[i].y-c.y)*(pts[i].y-c.y);
+  }
+  return J.toFixed(1);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  var i, k;
+  if(labs[0]>=0){
+    for(i=0;i<pts.length;i++){
+      ctx.fillStyle = COLS[labs[i]%8] + "22";
+      ctx.beginPath();
+      ctx.moveTo(toX(cents[labs[i]].x), toY(cents[labs[i]].y));
+      ctx.lineTo(toX(pts[i].x), toY(pts[i].y));
+      ctx.strokeStyle = COLS[labs[i]%8] + "55"; ctx.stroke();
+    }
+  }
+  for(i=0;i<pts.length;i++){
+    ctx.fillStyle = labs[i]>=0 ? COLS[labs[i]%8] : "#999";
+    ctx.beginPath(); ctx.arc(toX(pts[i].x), toY(pts[i].y), 3, 0, 7); ctx.fill();
+  }
+  for(k=0;k<cents.length;k++){
+    ctx.fillStyle = COLS[k%8]; ctx.strokeStyle="#000"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(toX(cents[k].x), toY(cents[k].y), 8, 0, 7); ctx.fill(); ctx.stroke();
+  }
+  document.getElementById("iter").textContent = iter;
+  document.getElementById("inertie").textContent = labs[0]>=0 ? inertia() : "—";
+}
+
+function initAll(){ stopAnim(); genData(); initCents(); iter=0; draw(); }
+function oneStep(){ var c = assignStep(); updateStep(); iter++; draw(); if(!c && iter>1) stopAnim(); }
+function toggleRun(){
+  if(anim){ stopAnim(); return; }
+  document.getElementById("btnRun").textContent = "⏸ Stop";
+  anim = setInterval(oneStep, 500);
+}
+function stopAnim(){ if(anim){ clearInterval(anim); anim=null; } document.getElementById("btnRun").textContent = "▶️ Animer"; }
+
+document.getElementById("nPts").oninput = function(){ document.getElementById("nVal").textContent=this.value; };
+document.getElementById("kSl").oninput = function(){ document.getElementById("kVal").textContent=this.value; };
+document.getElementById("dataset").onchange = initAll;
+document.getElementById("initMode").onchange = initAll;
+initAll();
+</script>
+
+## Implémentation Python (sans scikit-learn)
+
+```{python}
+import numpy as np
+
+def kmeans(X, K, n_iter=20, seed=42):
+    rng = np.random.default_rng(seed)
+    centroids = X[rng.choice(len(X), K, replace=False)]
+
+    for _ in range(n_iter):
+        d = np.linalg.norm(X[:, None, :] - centroids[None, :, :], axis=2)
+        labels = d.argmin(axis=1)
+        new = np.array([X[labels == k].mean(axis=0) for k in range(K)])
+        if np.allclose(centroids, new):
+            break
+        centroids = new
+    return labels, centroids
+```
+
+## Méthode du coude
+
+```{python}
+import matplotlib.pyplot as plt
+
+rng = np.random.default_rng(42)
+X = np.vstack([rng.normal([2,2], 1, (50,2)),
+               rng.normal([-2,-2], 1, (50,2)),
+               rng.normal([2,-3], 1, (50,2))])
+
+def inertie(X, K):
+    labels, centroids = kmeans(X, K)
+    return np.sum((X - centroids[labels])**2)
+
+Ks = range(1, 10)
+plt.plot(Ks, [inertie(X, k) for k in Ks], 'bo-')
+plt.axvline(3, color='red', linestyle='--', label='Coude : K = 3')
+plt.xlabel("K"); plt.ylabel("Inertie"); plt.legend()
+plt.show()
+```
+
+## Synthèse
+
+| ✅ Avantages | ❌ Limites |
+|---|---|
+| Simple et rapide | $K$ à choisir à l'avance |
+| Interprétable | Clusters convexes uniquement |
+| Convergence garantie | Minimum local, sensible à l'init |
+| | Sensible aux outliers |
+
+**Bonnes pratiques** : standardiser, coude pour $K$, K-Means++, visualiser !
+
+## Merci de votre attention !
+
+Des questions ?

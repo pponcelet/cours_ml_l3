@@ -20,3 +20,6 @@ format:
 ## À compléter
 
 Votre contenu ici.
+## Cours
+
+- [L'algorithme des K-Means](kmeans.html)

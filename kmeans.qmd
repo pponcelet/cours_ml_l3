@@ -1,0 +1,260 @@
+---
+title: "L'algorithme K-Means"
+subtitle: "Cours de Machine Learning — Clustering"
+date: today
+format:
+  revealjs:
+    theme: simple
+    transition: slide
+    slide-number: true
+    chalkboard: true
+execute:
+  echo: true
+  warning: false
+---
+
+## Rappel : le clustering
+
+- **Objectif** : regrouper des données *similaires* sans étiquettes (apprentissage non supervisé)
+- **Question centrale** : comment définir la "similarité" ? → une **distance** (souvent euclidienne)
+- Un bon clustering : forte homogénéité *dans* les clusters, forte séparation *entre* les clusters
+
+## K-Means : l'idée
+
+Partitionner $n$ observations en $K$ groupes en **minimisant l'inertie intra-classe** :
+
+$$J = \sum_{k=1}^{K} \sum_{x_i \in C_k} \|x_i - \mu_k\|^2$$
+
+- $C_k$ : le cluster $k$
+- $\mu_k$ : le centroïde (barycentre) du cluster $k$
+- $K$ est fixé **à l'avance** par l'utilisateur
+
+## L'algorithme de Lloyd (1957)
+
+1. **Initialisation** : choisir $K$ centroïdes (au hasard)
+2. **Assignation** : chaque point rejoint le centroïde le plus proche
+3. **Mise à jour** : chaque centroïde devient le barycentre de ses points
+4. **Itération** : répéter 2-3 jusqu'à convergence
+
+::: {.callout-note}
+L'inertie $J$ **diminue à chaque étape** → convergence garantie, mais vers un **minimum local** !
+:::
+
+## 🎬 Démonstration interactive
+
+<div style="display:flex; gap:8px; margin-bottom:6px; font-size:0.7em;">
+  <label>K = <span id="kVal">3</span>
+  <input type="range" id="kSlider" min="2" max="8" value="3" style="width:90px;"></label>
+  <button onclick="genData()">🔄 Données</button>
+  <button onclick="randInit()">🎲 Centres</button>
+  <button onclick="oneStep(true)">➡️ Étape</button>
+  <button onclick="toggleRun()" id="btnRun">▶️ Animer</button>
+  <span id="stats" style="margin-left:auto;"><b>It:</b> <span id="it">0</span> | <b>Inertie:</b> <span id="in">—</span></span>
+</div>
+<canvas id="cv" width="900" height="420" style="background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.2); display:block; margin:0 auto;"></canvas>
+<p style="font-size:0.6em; text-align:center; margin-top:4px;"><i>Observez : l'inertie diminue à chaque étape, puis se stabilise → convergence.</i></p>
+
+```{=html}
+<script>
+(function(){
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const PAD=30,W=cv.width-2*PAD,H=cv.height-2*PAD;
+const COLORS=['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#34495e'];
+let data=[],centroids=[],labels=[],K=3,iteration=0,running=false,phase='assign',timer=null,prevJ=null;
+
+function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+const toX=p=>PAD+p[0]*W, toY=p=>PAD+(1-p[1])*H;
+
+window.genData=function(){
+  data=[];
+  for(let c=0;c<K;c++){
+    const cx=.15+Math.random()*.7, cy=.15+Math.random()*.7, sp=.04+Math.random()*.05;
+    for(let i=0;i<40;i++) data.push([cx+randn()*sp, cy+randn()*sp]);
+  }
+  stop(); centroids=[]; labels=new Array(data.length).fill(-1);
+  iteration=0; prevJ=null; draw(); upd();
+};
+
+window.randInit=function(){
+  stop(); centroids=[];
+  const idx=new Set();
+  while(idx.size<K) idx.add(Math.floor(Math.random()*data.length));
+  centroids=[...idx].map(i=>[...data[i]]);
+  labels=new Array(data.length).fill(-1);
+  iteration=0; prevJ=null; phase='assign'; draw(); upd();
+};
+
+function assign(){
+  labels=data.map(p=>{
+    let best=0,bd=Infinity;
+    centroids.forEach((c,k)=>{const d=(p[0]-c[0])**2+(p[1]-c[1])**2;if(d<bd){bd=d;best=k;}});
+    return best;
+  });
+}
+function update(){
+  centroids=centroids.map((c,k)=>{
+    const pts=data.filter((_,i)=>labels[i]===k);
+    if(!pts.length) return [Math.random(),Math.random()];
+    return [pts.reduce((s,p)=>s+p[0],0)/pts.length, pts.reduce((s,p)=>s+p[1],0)/pts.length];
+  });
+}
+function inertia(){let s=0;data.forEach((p,i)=>{const c=centroids[labels[i]];if(c)s+=(p[0]-c[0])**2+(p[1]-c[1])**2;});return s;}
+
+window.oneStep=function(manual){
+  if(!centroids.length) return false;
+  if(phase==='assign'){
+    assign();
+    const J=inertia();
+    document.getElementById('in').textContent=J.toFixed(2);
+    if(prevJ!==null && Math.abs(prevJ-J)<1e-6){ stop(); }
+    prevJ=J; phase='update';
+  } else {
+    update(); iteration++;
+    document.getElementById('it').textContent=iteration;
+    phase='assign';
+  }
+  draw();
+  return running;
+};
+
+function stop(){ running=false; clearInterval(timer); document.getElementById('btnRun').textContent='▶️ Animer'; }
+window.toggleRun=function(){
+  if(!centroids.length) return;
+  if(running){ stop(); return; }
+  running=true;
+  document.getElementById('btnRun').textContent='⏸️ Pause';
+  timer=setInterval(()=>{ if(!oneStep()) stop(); },700);
+};
+
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle='#eee';
+  for(let i=0;i<=10;i++){
+    ctx.beginPath();ctx.moveTo(PAD+i*W/10,PAD);ctx.lineTo(PAD+i*W/10,PAD+H);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(PAD,PAD+i*H/10);ctx.lineTo(PAD+W,PAD+i*H/10);ctx.stroke();
+  }
+  data.forEach((p,i)=>{
+    const l=labels[i];
+    ctx.fillStyle=l>=0?COLORS[l%COLORS.length]:'#999';
+    ctx.globalAlpha=.7;
+    ctx.beginPath();ctx.arc(toX(p),toY(p),4,0,2*Math.PI);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+  centroids.forEach((c,k)=>{
+    const x=toX(c),y=toY(c);
+    ctx.fillStyle=COLORS[k%COLORS.length];
+    ctx.strokeStyle='#000';ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(x-9,y);ctx.lineTo(x,y-9);ctx.lineTo(x+9,y);ctx.lineTo(x,y+9);
+    ctx.closePath();ctx.fill();ctx.stroke();
+  });
+}
+function upd(){ document.getElementById('it').textContent=iteration; document.getElementById('in').textContent='—'; }
+
+document.getElementById('kSlider').oninput=e=>{ K=+e.target.value; document.getElementById('kVal').textContent=K; genData(); };
+genData();
+})();
+</script>
+```
+
+## Et en pratique, avec scikit-learn
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+
+np.random.seed(42)
+X = np.vstack([
+    np.random.randn(50, 2) + [2, 2],
+    np.random.randn(50, 2) + [-2, -2],
+    np.random.randn(50, 2) + [2, -3]
+])
+
+km = KMeans(n_clusters=3, random_state=42, n_init=10)
+labels = km.fit_predict(X)
+
+plt.figure(figsize=(7, 4))
+plt.scatter(X[:, 0], X[:, 1], c=labels, cmap='viridis', alpha=0.6)
+plt.scatter(km.cluster_centers_[:, 0], km.cluster_centers_[:, 1],
+            c='red', marker='X', s=200, edgecolors='black')
+plt.title(f"K-Means — Inertie finale : {km.inertia_:.1f}")
+plt.show()
+```
+
+## Comment choisir K ? La méthode du coude
+
+```{python}
+inerties = []
+K_range = range(1, 10)
+
+for k in K_range:
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    km.fit(X)
+    inerties.append(km.inertia_)
+
+plt.figure(figsize=(7, 4))
+plt.plot(K_range, inerties, 'bo-', linewidth=2)
+plt.axvline(x=3, color='red', linestyle='--', label='K = 3 (coude)')
+plt.xlabel("Nombre de clusters K")
+plt.ylabel("Inertie")
+plt.title("Méthode du coude")
+plt.legend()
+plt.show()
+```
+
+## Limite 1 : formes non sphériques
+
+```{python}
+from sklearn.datasets import make_moons
+
+X_moons, y_moons = make_moons(n_samples=200, noise=0.05, random_state=42)
+lab_moons = KMeans(n_clusters=2, random_state=42, n_init=10).fit_predict(X_moons)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+ax1.scatter(X_moons[:, 0], X_moons[:, 1], c=y_moons, cmap='viridis')
+ax1.set_title("Vrais clusters")
+ax2.scatter(X_moons[:, 0], X_moons[:, 1], c=lab_moons, cmap='viridis')
+ax2.set_title("K-Means échoue !")
+plt.tight_layout()
+plt.show()
+```
+
+## Limite 2 : sensibilité à l'initialisation
+
+```{python}
+fig, axes = plt.subplots(1, 3, figsize=(11, 3.5))
+
+for i, ax in enumerate(axes):
+    km = KMeans(n_clusters=3, random_state=i, n_init=1)
+    lab = km.fit_predict(X)
+    ax.scatter(X[:, 0], X[:, 1], c=lab, cmap='viridis', alpha=0.6)
+    ax.set_title(f"Init {i+1} — Inertie : {km.inertia_:.1f}")
+
+plt.tight_layout()
+plt.show()
+```
+
+::: {.callout-tip}
+C'est pourquoi on utilise `n_init=10` (10 initialisations, on garde la meilleure) et l'initialisation **k-means++** par défaut dans scikit-learn.
+:::
+
+## Synthèse
+
+| ✅ Avantages | ❌ Limites |
+|---|---|
+| Simple et rapide | $K$ à choisir à l'avance |
+| Facile à interpréter | Suppose des clusters sphériques |
+| Convergence garantie | Minimum local seulement |
+| | Sensible aux outliers |
+
+**Bonnes pratiques** :
+
+1. Standardiser les données (`StandardScaler`)
+2. Choisir $K$ avec la méthode du coude
+3. Utiliser `n_init=10` minimum
+4. Toujours visualiser les résultats !
+
+## Des questions ?
+
+**Merci de votre attention !**
